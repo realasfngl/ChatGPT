@@ -8,18 +8,21 @@ from json         import loads
 from time         import time
 from typing       import Any
 from base64       import b64decode
+from mimetypes    import guess_type
 from PIL import Image
 from io import BytesIO
 
-
 class ChatGPT:
-    
-    
-    def __init__(self, proxy: str=None, cookies: dict = None) -> Any:
+    def __init__(self, proxy: str=None, cookies: dict = None, authorization: str = None) -> Any:
         self.session: requests.session.Session = requests.Session(impersonate="chrome133a")
         self.session.headers = Headers.DEFAULT
         self.data: dict = {}
-        
+        self.authorization: str = authorization
+        if self.authorization:
+            self.session.headers.update({
+                'Authorization': self.authorization
+            })
+
         if proxy:
             
             self.session.proxies = {
@@ -295,6 +298,7 @@ class ChatGPT:
             self._fetch_cookies()
         else:
             self.session.cookies.update(cookies)
+            self._fetch_cookies()
             
     def _generate_react(self) -> str:
         n = random() 
@@ -336,8 +340,8 @@ class ChatGPT:
                                 
                     elif 'v' in data and isinstance(data['v'], str):
                         result.append(data['v'])
-                        
-        return (''.join(result)).replace("\n", "")
+
+        return ''.join(result)
         
     def _fetch_cookies(self) -> None:
         
@@ -350,26 +354,7 @@ class ChatGPT:
         self.start_time: int = int(time() * 1000)
         self.sid: str = str(uuid4())
         
-        self.data["config"] = [
-            4880,
-            datetime.now(ZoneInfo(self.ip_info[5])).strftime(f"%a %b %d %Y %H:%M:%S GMT%z ({datetime.now(ZoneInfo(self.ip_info[5])).tzname()})"),
-            4294705152,
-            random(),
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
-            None,
-            self.data["prod"],
-            "de-DE",
-            "de-DE,de,en-US,en",
-            random(),
-            "webkitGetUserMedia−function webkitGetUserMedia() { [native code] }",
-            choice(self.reacts),
-            choice(self.window_keys),
-            randint(800, 1400) + random(),
-            self.sid,
-            "",
-            20,
-            self.start_time
-        ]
+        self.data["config"] = self._get_config(randint(800, 1400))
     
     def _get_tokens(self, process_time: int=randint(1400, 2000)) -> None:
         
@@ -377,12 +362,29 @@ class ChatGPT:
         self.session.headers.update({
             'oai-client-version': self.data["prod"],
             'oai-device-id': self.data["device-id"],
+            'Authorization': self.authorization
         })
         
         p_value: str = Challenges.generate_token(self.data["config"])
         self.data["vm_token"] = p_value
+        self.data["config"] = self._get_config(process_time)
         
-        self.data["config"] = [
+        requirements_data: dict = {
+            'p': p_value,
+        }
+        
+        requirements_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/sentinel/chat-requirements', json=requirements_data)
+
+        if requirements_request.status_code == 200:
+            self.data["token"] = requirements_request.json().get("token")
+            self.data["proofofwork"] = requirements_request.json().get("proofofwork")
+            self.data["bytecode"] = requirements_request.json().get("turnstile").get("dx")
+        
+        else:
+            Log.Error("Something went wrong while fetching chat requirements")
+
+    def _get_config(self, process_time: int) -> None:
+        return [
             4880,
             datetime.now(ZoneInfo(self.ip_info[5])).strftime(f"%a %b %d %Y %H:%M:%S GMT%z ({datetime.now(ZoneInfo(self.ip_info[5])).tzname()})"),
             4294705152,
@@ -402,28 +404,15 @@ class ChatGPT:
             20,
             self.start_time
         ]
-        
-        requirements_data: dict = {
-            'p': p_value,
-        }
-        
-        requirements_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/sentinel/chat-requirements', json=requirements_data)
 
-        if requirements_request.status_code == 200:
-            self.data["token"] = requirements_request.json().get("token")
-            self.data["proofofwork"] = requirements_request.json().get("proofofwork")
-            self.data["bytecode"] = requirements_request.json().get("turnstile").get("dx")
-        
-        else:
-            Log.Error("Something went wrong while fetching chat requirements")
-    
     def get_conduit(self, next: bool = False) -> str:
         self.session.headers = Headers.CONDUIT
         self.session.headers.update({
             'oai-client-version': self.data["prod"],
             'oai-device-id': self.data["device-id"],
+            'Authorization': self.authorization
         })
-        
+
         if not next:
             post_data: dict = {
                 'action': 'next',
@@ -474,242 +463,66 @@ class ChatGPT:
             return None
     
     def start_conversation(self, message: str) -> None:
-        
-        self._get_tokens()
-        conduit_token: str = self.get_conduit()
-        
-        time_1: int = randint(6000, 9000)
-        proof_token: str = Challenges.solve_pow(self.data["proofofwork"]["seed"], self.data["proofofwork"]["difficulty"], self.data["config"])
-        Log.Success(f"Solved POW: {proof_token}")
-        turnstile_token: str = VM.get_turnstile(self.data["bytecode"], self.data["vm_token"], str(self.ip_info[:-1]))
+        return self.ask_question_with_file(message)
 
-        self.session.headers = Headers.CONVERSATION
-        self.session.headers.update({
-            'oai-client-version': self.data["prod"],
-            'oai-device-id': self.data["device-id"],
-            'oai-echo-logs': f'0,{time_1},1,{time_1 + randint(1000, 1200)}',
-            'openai-sentinel-chat-requirements-token': self.data["token"],
-            'openai-sentinel-proof-token': proof_token,
-            'openai-sentinel-turnstile-token': turnstile_token,
-            'x-conduit-token': conduit_token,
-        })
-
-        conversation_data: dict = {
-            'action': 'next',
-            'messages': [
-                {
-                    'id': str(uuid4()),
-                    'author': {
-                        'role': 'user',
-                    },
-                    'create_time': round(time(), 3),
-                    'content': {
-                        'content_type': 'text',
-                        'parts': [
-                            message,
-                        ],
-                    },
-                    'metadata': {
-                        'selected_github_repos': [],
-                        'selected_all_github_repos': False,
-                        'serialization_metadata': {
-                            'custom_symbol_offsets': [],
-                        },
-                    },
-                },
-            ],
-            'parent_message_id': 'client-created-root',
-            'model': 'auto',
-            'timezone_offset_min': self.timezone_offset,
-            'timezone': self.ip_info[5],
-            'history_and_training_disabled': True,
-            'conversation_mode': {
-                'kind': 'primary_assistant',
-            },
-            'enable_message_followups': True,
-            'system_hints': [],
-            'supports_buffering': True,
-            'supported_encodings': [
-                'v1',
-            ],
-            'client_contextual_info': {
-                'is_dark_mode': True,
-                'time_since_loaded': randint(3, 6),
-                'page_height': 1219,
-                'page_width': 3440,
-                'pixel_ratio': 1,
-                'screen_height': 1440,
-                'screen_width': 3440,
-            },
-            'paragen_cot_summary_display_override': 'allow',
-            'force_parallel_switch': 'auto',
-        }
-        
-        conversation_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/f/conversation', json=conversation_data)
-        self.session.cookies.update(conversation_request.cookies)
-        
-        if 'Unusual activity' in conversation_request.text:
-            Log.Error("Your IP got flagged by chatgpt, retry with a new IP")
-            exit(conversation_request.status_code)
-        
-        self.data["conversation_id"] = Utils.between(conversation_request.text, '"conversation_id": "', '"')
-        self.data["parent_message_id"] = Utils.between(conversation_request.text, '"message_id": "', '"')
-        self.response = self._parse_event_stream(conversation_request.text)
-
-    def upload_image(self, image: str) -> None:
-        
+    def upload_file(self, file_name: str, file_b64: str, is_image: bool = False, is_zip: bool = False) -> None:
         self.session.headers = Headers.REQUIREMENTS
         self.session.headers.update({
             'oai-client-version': self.data["prod"],
             'oai-device-id': self.data["device-id"],
+            'Authorization': self.authorization
         })
-        
-        self.file_name: str = str(uuid4())
-        
-        if image.startswith("data:image"):
-            image = image.split(",")[1]
-            
-        self.file_size: int = len(b64decode(image))
-        self.width, self.height = Image.open(BytesIO(b64decode(image))).size
-        
-        image_data: dict = {
-            'file_name': f'{self.file_name}.png',
-            'file_size': self.file_size,
-            'use_case': 'multimodal',
+
+        if file_b64.startswith("data:"):
+            file_b64 = file_b64.split(",")[1]
+
+        file_size: int = len(b64decode(file_b64))
+        use_case: str = 'ace_upload' if is_zip else 'my_files'
+        width, height = None, None
+        if is_image:
+            width, height = Image.open(BytesIO(b64decode(file_b64))).size
+            use_case = 'multimodal'
+
+        file_data: dict = {
+            'file_name': file_name,
+            'file_size': file_size,
+            'use_case': use_case,
             'timezone_offset_min': self.timezone_offset,
             'reset_rate_limits': False,
         }
-        file_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/files', json=image_data)
-        
-        self.data["file_id"] = file_request.json().get("file_id")
+        file_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/files', json=file_data)
+        file_id: str = file_request.json().get("file_id")
         upload_url: str = file_request.json().get("upload_url")
-        
+
         self.session.headers = Headers.FILE
-        upload_request: requests.models.Response = self.session.put(upload_url, data=b64decode(image))
+        self.session.headers.update({
+            'Authorization': self.authorization
+        })
+        upload_request: requests.models.Response = self.session.put(upload_url, data=b64decode(file_b64))
 
         self.session.headers = Headers.REQUIREMENTS
         self.session.headers.update({
             'oai-client-version': self.data["prod"],
             'oai-device-id': self.data["device-id"],
+            'Authorization': self.authorization
         })
-        
+
         process_data: dict = {
-            'file_id': self.data["file_id"],
-            'use_case': 'multimodal',
+            'file_id': file_id,
+            'use_case': use_case,
             'index_for_retrieval': False,
-            'file_name': f'{self.file_name}.png',
+            'file_name': file_name,
         }
-        
+
         process_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/files/process_upload_stream', json=process_data)
-        
         if "Succeeded processing " in process_request.text:
-            return
+            return file_id, file_size, width, height
         else:
-            Log.Error("Something went wrong while uploading image")
+            Log.Error("Something went wrong while uploading file")
+            return None
         
-        
-        
-    def start_with_image(self, message: str, image: str) -> None:
-        
-        self._get_tokens()
-        conduit_token: str = self.get_conduit()
-        self.upload_image(image)
-        
-        time_1: int = randint(6000, 9000)
-        proof_token: str = Challenges.solve_pow(self.data["proofofwork"]["seed"], self.data["proofofwork"]["difficulty"], self.data["config"])
-        
-        turnstile_token: str = VM.get_turnstile(self.data["bytecode"], self.data["vm_token"], str(self.ip_info[:-1]))
-
-        self.session.headers = Headers.CONVERSATION
-        self.session.headers.update({
-            'oai-client-version': self.data["prod"],
-            'oai-device-id': self.data["device-id"],
-            'oai-echo-logs': f'0,{time_1},1,{time_1 + randint(1000, 1200)}',
-            'openai-sentinel-chat-requirements-token': self.data["token"],
-            'openai-sentinel-proof-token': proof_token,
-            'openai-sentinel-turnstile-token': turnstile_token,
-            'x-conduit-token': conduit_token,
-        })
-
-        conversation_data: dict = {
-            'action': 'next',
-            'messages': [
-                {
-                    'id': str(uuid4()),
-                    'author': {
-                        'role': 'user',
-                    },
-                    'create_time': round(time(), 3),
-                    'content': {
-                        'content_type': 'multimodal_text',
-                        'parts': [
-                            {
-                                'content_type': 'image_asset_pointer',
-                                'asset_pointer': f'file-service://{self.data["file_id"]}',
-                                'size_bytes': self.file_size,
-                                'width': self.width,
-                                'height': self.height,
-                            },
-                            message,
-                        ],
-                    },
-                    'metadata': {
-                        'attachments': [
-                            {
-                                'id': self.data["file_id"],
-                                'size': self.file_size,
-                                'name': f'{self.file_name}.png',
-                                'mime_type': 'image/png',
-                                'width': self.width,
-                                'height': self.height,
-                                'source': 'local',
-                            },
-                        ],
-                        'selected_github_repos': [],
-                        'selected_all_github_repos': False,
-                        'serialization_metadata': {
-                            'custom_symbol_offsets': [],
-                        },
-                    },
-                },
-            ],
-            'parent_message_id': 'client-created-root',
-            'model': 'auto',
-            'timezone_offset_min': self.timezone_offset,
-            'timezone': self.ip_info[5],
-            'history_and_training_disabled': True,
-            'conversation_mode': {
-                'kind': 'primary_assistant',
-            },
-            'enable_message_followups': True,
-            'system_hints': [],
-            'supports_buffering': True,
-            'supported_encodings': [
-                'v1',
-            ],
-            'client_contextual_info': {
-                'is_dark_mode': True,
-                'time_since_loaded': randint(3, 6),
-                'page_height': 1219,
-                'page_width': 3440,
-                'pixel_ratio': 1,
-                'screen_height': 1440,
-                'screen_width': 3440,
-            },
-            'paragen_cot_summary_display_override': 'allow',
-            'force_parallel_switch': 'auto',
-        }
-        
-        conversation_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/f/conversation', json=conversation_data)
-        self.session.cookies.update(conversation_request.cookies)
-        
-        if 'Unusual activity' in conversation_request.text:
-            Log.Error("Your IP got flagged by chatgpt, retry with a new IP")
-            exit(conversation_request.status_code)
-        
-        self.data["conversation_id"] = Utils.between(conversation_request.text, '"conversation_id": "', '"')
-        self.data["parent_message_id"] = Utils.between(conversation_request.text, '"message_id": "', '"')
-        self.response = self._parse_event_stream(conversation_request.text)
+    def start_with_image(self, message: str, file_name: str, image: str) -> None:
+        self.ask_question_with_file(message, file_name, image)
     
     def hold_conversation(self, message: str, new: bool = True) -> None:
         self.index = 2000
@@ -737,6 +550,7 @@ class ChatGPT:
             'openai-sentinel-proof-token': proof_token,
             'openai-sentinel-turnstile-token': turnstile_token,
             'x-conduit-token': conduit_token,
+            'Authorization': self.authorization
         })
         
         if new:
@@ -811,8 +625,138 @@ class ChatGPT:
     def ask_question(self, message: str, image: str = None) -> str:
         
         if not image:
-            self.start_conversation(message)
+            self.ask_question_with_file(message)
         else:
-            self.start_with_image(message, image)
+            file_name = f"{str(uuid4())}.png"
+            self.ask_question_with_file(message, file_name, image, is_image=True)
         
+        return self.response
+
+    def ask_question_with_file(self, message: str, model: str = "auto", file_name: str = None, file_b64: str = None) -> str:
+        self._get_tokens()
+        conduit_token: str = self.get_conduit()
+
+        time_1: int = randint(6000, 9000)
+        proof_token: str = Challenges.solve_pow(self.data["proofofwork"]["seed"], self.data["proofofwork"]["difficulty"], self.data["config"])
+        turnstile_token: str = VM.get_turnstile(self.data["bytecode"], self.data["vm_token"], str(self.ip_info[:-1]))
+
+        self.session.headers = Headers.CONVERSATION
+        self.session.headers.update({
+            'oai-client-version': self.data["prod"],
+            'oai-device-id': self.data["device-id"],
+            'oai-echo-logs': f'0,{time_1},1,{time_1 + randint(1000, 1200)}',
+            'openai-sentinel-chat-requirements-token': self.data["token"],
+            'openai-sentinel-proof-token': proof_token,
+            'openai-sentinel-turnstile-token': turnstile_token,
+            'x-conduit-token': conduit_token,
+            'Authorization': self.authorization
+        })
+
+        
+        msg = {
+            'id': str(uuid4()),
+            'author': {
+                'role': 'user',
+            },
+            'create_time': round(time(), 3),
+            'metadata': {
+                'selected_github_repos': [],
+                'selected_all_github_repos': False,
+                'selected_sources': [],
+                'serialization_metadata': {
+                    'custom_symbol_offsets': [],
+                },
+            },
+        }
+
+        is_image = False
+        is_zip = False
+
+        if file_name and file_b64:
+            mime_type = guess_type(file_name)[0]
+            is_zip = file_name.endswith('.zip')
+            is_image = file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp'))
+            mime_type = "application/zip" if is_zip else "image/png" if is_image else mime_type
+            
+            file_id, file_size, width, height = self.upload_file(file_name, file_b64, is_image=is_image, is_zip=is_zip)
+
+            attachment = {
+                'id': file_id,
+                'size': file_size,
+                'name': file_name,
+                'mime_type': mime_type,
+                'source': 'local',
+            }
+            if is_image:
+                attachment.update({
+                    'width': width,
+                    'height': height,
+                })
+
+            msg['metadata']['attachments'] = [attachment]
+
+        if is_image:
+            msg["content"] = {
+                'content_type': 'multimodal_text',
+                'parts': [
+                    {
+                        'content_type': 'image_asset_pointer',
+                        'asset_pointer': f'file-service://{file_id}',
+                        'size_bytes': file_size,
+                        'width': width,
+                        'height': height,
+                    },
+                    message,
+                ],
+            }
+        else:
+            msg["content"] = {
+                'content_type': 'text',
+                'parts': [
+                    message,
+                ],
+            }
+
+        conversation_data: dict = {
+            'action': 'next',
+            'messages': [
+                msg,
+            ],
+            'parent_message_id': 'client-created-root',
+            'model': model,
+            'timezone_offset_min': self.timezone_offset,
+            'timezone': self.ip_info[5],
+            'history_and_training_disabled': True,
+            'conversation_mode': {
+                'kind': 'primary_assistant',
+            },
+            'enable_message_followups': True,
+            'system_hints': [],
+            'supports_buffering': True,
+            'supported_encodings': [
+                'v1',
+            ],
+            'client_contextual_info': {
+                'is_dark_mode': True,
+                'time_since_loaded': randint(3, 6),
+                'page_height': 1219,
+                'page_width': 3440,
+                'pixel_ratio': 1,
+                'screen_height': 1440,
+                'screen_width': 3440,
+            },
+            'paragen_cot_summary_display_override': 'allow',
+            'force_parallel_switch': 'auto',
+        }
+
+        conversation_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/f/conversation', json=conversation_data, timeout=(30, None))
+        self.session.cookies.update(conversation_request.cookies)
+        
+        if 'Unusual activity' in conversation_request.text:
+            Log.Error("Your IP got flagged by chatgpt, retry with a new IP")
+            exit(conversation_request.status_code)
+        
+        self.data["conversation_id"] = Utils.between(conversation_request.text, '"conversation_id": "', '"')
+        self.data["parent_message_id"] = Utils.between(conversation_request.text, '"message_id": "', '"')
+        self.response = self._parse_event_stream(conversation_request.text)
         return self.response
