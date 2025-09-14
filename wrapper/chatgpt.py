@@ -649,7 +649,7 @@ class ChatGPT:
         
         return self.response
 
-    def ask_question_with_file(self, message: str, model: str = "gpt-5", file_name: str = None, file_b64: str = None) -> str:
+    def ask_question_with_file(self, message: str, model: str = "auto", file_name: str = None, file_b64: str = None) -> str:
         self._get_tokens()
         conduit_token: str = self.get_conduit()
 
