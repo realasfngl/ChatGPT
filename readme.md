@@ -6,7 +6,7 @@ A reverse-engineered implementation of ChatGPT that bypasses OpenAI's API system
 
 **Install dependencies:**
 ```bash
-pip install fastapi uvicorn curl-cffi pydantic pillow colorama esprima
+pip install fastapi uvicorn curl-cffi pydantic pillow colorama esprima tzdata
 ```
 
 **Run the API server:**
