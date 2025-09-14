@@ -354,26 +354,7 @@ class ChatGPT:
         self.start_time: int = int(time() * 1000)
         self.sid: str = str(uuid4())
         
-        self.data["config"] = [
-            4880,
-            datetime.now(ZoneInfo(self.ip_info[5])).strftime(f"%a %b %d %Y %H:%M:%S GMT%z ({datetime.now(ZoneInfo(self.ip_info[5])).tzname()})"),
-            4294705152,
-            random(),
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
-            None,
-            self.data["prod"],
-            "de-DE",
-            "de-DE,de,en-US,en",
-            random(),
-            "webkitGetUserMedia−function webkitGetUserMedia() { [native code] }",
-            choice(self.reacts),
-            choice(self.window_keys),
-            randint(800, 1400) + random(),
-            self.sid,
-            "",
-            20,
-            self.start_time
-        ]
+        self.data["config"] = self._get_config(randint(800, 1400))
     
     def _get_tokens(self, process_time: int=randint(1400, 2000)) -> None:
         
@@ -386,8 +367,24 @@ class ChatGPT:
         
         p_value: str = Challenges.generate_token(self.data["config"])
         self.data["vm_token"] = p_value
+        self.data["config"] = self._get_config(process_time)
         
-        self.data["config"] = [
+        requirements_data: dict = {
+            'p': p_value,
+        }
+        
+        requirements_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/sentinel/chat-requirements', json=requirements_data)
+
+        if requirements_request.status_code == 200:
+            self.data["token"] = requirements_request.json().get("token")
+            self.data["proofofwork"] = requirements_request.json().get("proofofwork")
+            self.data["bytecode"] = requirements_request.json().get("turnstile").get("dx")
+        
+        else:
+            Log.Error("Something went wrong while fetching chat requirements")
+
+    def _get_config(self, process_time: int) -> None:
+        return [
             4880,
             datetime.now(ZoneInfo(self.ip_info[5])).strftime(f"%a %b %d %Y %H:%M:%S GMT%z ({datetime.now(ZoneInfo(self.ip_info[5])).tzname()})"),
             4294705152,
@@ -407,21 +404,7 @@ class ChatGPT:
             20,
             self.start_time
         ]
-        
-        requirements_data: dict = {
-            'p': p_value,
-        }
-        
-        requirements_request: requests.models.Response = self.session.post('https://chatgpt.com/backend-anon/sentinel/chat-requirements', json=requirements_data)
 
-        if requirements_request.status_code == 200:
-            self.data["token"] = requirements_request.json().get("token")
-            self.data["proofofwork"] = requirements_request.json().get("proofofwork")
-            self.data["bytecode"] = requirements_request.json().get("turnstile").get("dx")
-        
-        else:
-            Log.Error("Something went wrong while fetching chat requirements")
-    
     def get_conduit(self, next: bool = False) -> str:
         self.session.headers = Headers.CONDUIT
         self.session.headers.update({
