@@ -36,7 +36,8 @@ class Decompiler:
         "29": "LESS_THAN",
         "31": "INCREMENT",
         "32": "DECREMENT_AND_EXEC",
-        "33": "MULTIPLY"
+        "33": "MULTIPLY",
+        "34": "MOVE"
     }
 
     functions: dict = {
@@ -174,6 +175,9 @@ class Decompiler:
         elif operation == "JSON_STRINGIFY":
             var_name = str(args[0]).replace(".", "_")
             Decompiler.decompiled += f"var var_{var_name} = JSON.stringify(var_{var_name});\n"
+            
+        elif operation == "MOVE":
+            Decompiler.decompiled += f"MOVE {args}" # not even used lmfao
         
         else:
             mapped = [Decompiler.mapping[key] for key in args[1:] if key in Decompiler.mapping]
